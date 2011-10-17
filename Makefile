@@ -1,4 +1,4 @@
-# Project Master Makefile
+# csci4211 Project Master Makefile
 # Jason Zerbe - 3830775
 
 #FLAGS = -Wall -g -DDEBUG #debug (includes gdb extensions)
@@ -7,14 +7,14 @@ FLAGS = -Wall #normal
 
 CC = gcc #g++
 CEXT = c #cpp
-LIBOPTS = -lsocket -lnsl
-
-.PHONY: dist
-dist: peer
-	cp peer dist/
+LIBOPTS = -lnsl -lsocket #just -lnsl is needed on solaris
 
 .PHONY: all
-all: peer
+all: build
+
+.PHONY: build
+build: peer
+	cp peer dist/
 
 peer: sockcomm.o
 	${CC} ${LIBOPTS} ${FLAGS} src/$@.${CEXT} $^ -o $@

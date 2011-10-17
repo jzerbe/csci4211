@@ -1,73 +1,115 @@
-/*********************************************
- *
- * File name	    : sockcomm.c 
- * Description    : socket communication program
- *
- **********************************************/
+/**
+ * sockcomm.c - helper functions for peer program
+ */
 
-#include "sockcomm.h"
-#include <sys/types.h>
-#include <sys/uio.h>
-#include <unistd.h>
+#include "./sockcomm.h"
 
-/* Function: ConnectToServer
- * 1. Connect to specified server and port
- * 2. Return socket
+/**
+ * convenience method for outputting error and exiting program
+ * 
+ * @param msg char* - the string to output as error message
+ */
+void ExitError(const char* theErrorMessage) {
+    perror(theErrorMessage);
+    exit(1);
+}
+
+/**
+ * return the file descriptor of the socket after connecting
+ * to the specified server and port
+ * 
+ * @param hostname char* - the hostname to connect to
+ * @param port int - the port to connect to
+ * @return int - the socket file descriptor, -1 on error
  */
 int ConnectToServer(char* hostname, int port) {
+    if ((hostname == NULL) || (port <= 0)) return -1;
+
     int sd;
 
-    /*
-      FILL HERE:
-      connect to server, and return the socekt. The parameter 'hostname' is
-      the host name such as 'venus'. Use gethostbyname() to get host address info.
-     */
+    struct hostent* server_name = gethostbyname(hostname);
+    if (server_name == NULL) return -1;
+
+    struct sockaddr_in serv_sockaddr;
+    serv_sockaddr.sin_family = AF_INET;
+    bcopy((char *) server_name->h_addr, (char *) &serv_sockaddr.sin_addr.s_addr,
+            server_name->h_length);
+    serv_sockaddr.sin_port = htons(port);
+
+    if (connect(sd, (struct sockaddr *) &serv_sockaddr, sizeof (serv_sockaddr)) < 0)
+        return -1;
 
     return (sd);
 }
 
-/* Function: SocketInit
- * 1. Create a socket, bind to local IP and 'port', and listen to the socket
- * 2. Return the socket
+/**
+ * create a local listener socket bound to a certain port
+ * 
+ * @param port int - the port to bind on
+ * @return int - the socket file descriptor, -1 on error
  */
 int SocketInit(int port) {
-    int sd;
+    if (port <= 0) return -1;
 
-    /*
-      FILL HERE:
-     */
+    int sd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sd < 0) return -1;
+
+    struct sockaddr_in serv_sockaddr;
+    serv_sockaddr.sin_family = AF_INET;
+    serv_sockaddr.sin_addr.s_addr = INADDR_ANY;
+    serv_sockaddr.sin_port = htons(port);
+
+    if (bind(sd, (struct sockaddr *) &serv_sockaddr, sizeof (serv_sockaddr)) < 0)
+        return -1;
+    if (listen(sd, LISTEN_BACKLOG) < 0)
+        return -1;
 
     return (sd);
 }
 
-/* Function: AcceptCall
- * 1. Accept a connection request
- * 2. return the accepted socket
+/**
+ * wrapper function for the "accept" socket call
+ * 
+ * @param sockfd int - the socket file descriptor to be accepted
+ * @return int - the accepted socket file descriptor, -1 on (accept) error
  */
 int AcceptConnection(int sockfd) {
-    int newsock;
+    if (sockfd < 0) return -1;
 
-    /*
-      FILL HERE:
-      use accept() on 'sockfd' to accept connection
-     */
+    struct sockaddr_in cli_sockaddr;
+    socklen_t client_socklen = sizeof (cli_sockaddr);
+    int newsockfd = accept(sockfd, (struct sockaddr *) &cli_sockaddr, &client_socklen);
 
-    return newsock;
+    return newsockfd;
 }
 
-/* Function: ReadMsg
- * Read a message
+/**
+ * read into a buffer from a certain file descriptor
+ * 
+ * @param fd int - the file descriptor to read from
+ * @param buff char* - buffer to fill with the read message
+ * @param size int - maximum number of bytes to read, 2 less buffer size
+ * @return int - number of bytes read, -1 on error
  */
 int ReadMsg(int fd, char* buff, int size) {
+    if ((fd < 0) || (buff == NULL) || (size <= 0)) return -1;
+
     int nread = read(fd, buff, size);
     buff[nread] = '\0';
+
     return (nread);
 }
 
-/* Function: SendMsg
- * receive a message
+/**
+ * write to a certain file descriptor from a buffer
+ * 
+ * @param fd int - the file descriptor to write to
+ * @param buff char* - buffer containing message to write
+ * @param size int - maximum number of byte to write, 1 less than buffer size
+ * @return int - number of bytes written, -1 on error
  */
 int SendMsg(int fd, char* buff, int size) {
+    if ((fd < 0) || (buff == NULL) || (size <= 0)) return -1;
+
     return (write(fd, buff, size));
 }
-

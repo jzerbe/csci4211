@@ -1,22 +1,26 @@
-/*
-        csci4211 Fall 2011
-        Programming Assignment: Simple File Sharing System
+/**
+ * csci4211 Fall 2011
+ * Programming Assignment: Simple File Sharing System
+ * 
+ * peer.c - main peer program source file
  */
+
 #define JOIN_PORT 8000
 #define MAXMSGLEN  1024
 #define MAXNAMELEN 128
 
-#include <stdio.h>
-#include <fcntl.h>
-#include <string.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
 #include <arpa/inet.h>
-#include <netdb.h>
-#include <time.h>
-#include <errno.h>
 #include <dirent.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <netdb.h>
+#include <netinet/in.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <time.h>
 #include "sockcomm.h"
 
 /*
