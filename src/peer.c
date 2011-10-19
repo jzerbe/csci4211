@@ -5,10 +5,6 @@
  * peer.c - main peer program source file
  */
 
-#define JOIN_PORT 8000
-#define MAXMSGLEN  1024
-#define MAXNAMELEN 128
-
 #include <arpa/inet.h>
 #include <dirent.h>
 #include <errno.h>
@@ -20,113 +16,119 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/types.h>
-#include <time.h>
 #include "sockcomm.h"
 
-/*
-  User by a new peer host to join the system
-  throught host 'peerhost'.
+/**
+ * join tree P2P network through other host
+ * @param peerhost char* - the name of the bootstrap peer
+ * @param peerport unsigned short - the port number on the bootstrap peer
+ * @return int - the socket file descriptor, -1 on error
  */
-int join(char *peerhost, ushort peerport) {
-    int sd;
-    struct sockaddr_in myaddr;
+int join(char *peerhost, unsigned short peerport) {
+    int sd = ConnectToServer(peerhost, peerport);
+    if (sd < 0) {
+        return -1;
+    }
 
-    sd = ConnectToServer(peerhost, peerport);
+    unsigned short aLocalPortNum;
+    LocalSocketInfo(sd, NULL, &aLocalPortNum);
 
-    /* 
-       FILL HERE:
-       use getsockname() to find the port number
-     */
-
-    printf("admin: connected to peer host on '%s' at '%hu' thru '%hu'\n",
-            peerhost, peerport, ntohs(myaddr.sin_port));
+    printf("admin - connected to peer host on %s:%hu through %hu\n",
+            peerhost, peerport, aLocalPortNum);
 
     return (sd);
 }
 
 int main(int argc, char *argv[]) {
-    int hJoinSock;
-    int hListenSock;
-    int hDataSock;
-    int sock;
-    int livesdmax; /* maximum active descriptor */
-    fd_set readset; /* used for select() */
-    fd_set livesdset; /* used to keep track of active descriptors */
-    char szDir[256];
-    DIR *dp;
-    struct dirent *dirp;
-    char filelist[2048]; /* contains all file names in the shared directory, separated by '\r\n' */
-    char szBuffer[2048];
-    struct hostent *myhostent;
-
+    //check if we have adequate parameters
     if (argc != 2 && argc != 3) {
         printf("Usage: %s <directory pathname> [<peer name>]\n", argv[0]);
-        exit(0);
+        exit(EXIT_SUCCESS);
     }
 
-    /* argv[1] contains the pathname of the directory that is shared */
-    strcpy(szDir, argv[1]);
-    if ((dp = opendir(szDir)) == NULL) {
-        printf("Can not open directory '%s'\n", szDir);
-        exit(0);
-    } else {
+
+    //shared file list global variables
+    char mySharePathCharArray[256];
+    DIR *myShareDirPointer;
+    struct dirent *myShareDirEntry;
+    char filelist[2048]; //file names in share directory, separated by '\r\n'
+
+    //grab shared file list
+    strncpy(mySharePathCharArray, argv[1], 255);
+    mySharePathCharArray[255] = '\0';
+    if ((myShareDirPointer = opendir(mySharePathCharArray)) == NULL) {
+        printf("unable to open share directory '%s'\n", mySharePathCharArray);
+        exit(EXIT_FAILURE);
+    } else { //directory was opened
         filelist[0] = '\0';
-        while ((dirp = readdir(dp)) != NULL) {
-            if ((strcmp(dirp->d_name, ".") == 0) || (strcmp(dirp->d_name, "..") == 0)) continue;
-            strcat(filelist, dirp->d_name);
-            strcat(filelist, "\r\n");
+        while ((myShareDirEntry = readdir(myShareDirPointer)) != NULL) {
+            if ((strncmp(myShareDirEntry->d_name, ".", 2) == 0) ||
+                    (strncmp(myShareDirEntry->d_name, "..", 2) == 0))
+                continue;
+            strcat(filelist, myShareDirEntry->d_name); //TODO: use strncat
+            strcat(filelist, "\r\n"); //TODO: use strncat
         }
-        closedir(dp);
+        closedir(myShareDirPointer);
     }
 
-    /* start accepting join request of new peers */
-    if ((hJoinSock = SocketInit(JOIN_PORT)) == -1) {
-        perror("SocketInit");
-        exit(1);
+
+    //start local server
+    int myLocalJoinServerSocket = SocketInit(JOIN_PORT);
+    if (myLocalJoinServerSocket < 0) {
+        perror("unable to start local join server socket");
+        exit(EXIT_FAILURE);
     }
-
-    /* figure out the name of this host */
-    /*
-      FILL HERE:
-      Use gethostname() and gethostbyname() to figure the full name of the host
-     */
-
-    printf("admin: started server on '%s' at '%hu'\n", myhostent->h_name, JOIN_PORT);
+    //grab local address information
+    char aLocalHostName[MAXNAMELEN];
+    LocalSocketInfo(myLocalJoinServerSocket, aLocalHostName, NULL);
+    printf("admin - started join server on %s:%hu\n", aLocalHostName, JOIN_PORT);
 
 
-    /* if address is specified, join the system from the specified node */
-    if (argc > 2) {
+    //join network via given bootstrap peer
+    int myBootStrapPeerSock = -1;
+    if (argc == 3) {
         // connect to a known peer in the system
-        sock = join(argv[2], JOIN_PORT);
-        if (sock == -1) exit(1);
+        myBootStrapPeerSock = join(argv[2], JOIN_PORT);
+        if (myBootStrapPeerSock < 0) {
+            perror("unable to connect to bootstrap peer");
+            exit(EXIT_FAILURE);
+        }
     }
 
-    /*
-      FILL HERE:
-      Prepare parameters for the select()
-      Note: 'sock' is not set for the first member since it doesn't join others
-     */
 
+    //select loop variables
+    fd_set myMasterFileDescReadSet; //automatically updated each select loop - DO NOT TOUCH
+    fd_set myActiveFileDesc; //track active descriptors - set to update in logic
+    FD_ZERO(myMasterFileDescReadSet);
+    FD_ZERO(myActiveFileDesc);
+    FD_SET(myLocalJoinServerSocket, &myActiveFileDesc);
+    if (myBootStrapPeerSock > -1) { //only add the bootstrap socket if used
+        FD_SET(myBootStrapPeerSock, &myActiveFileDesc);
+    }
+    //set the maximum number of sockets to select
+    int myActiveFileDescMax = MaximumHelper(myLocalJoinServerSocket, myBootStrapPeerSock);
+
+    char szBuffer[2048];
+    int hListenSock;
+    int hDataSock;
+
+    //more on select loops --> http://www.tenouk.com/Module41.html
     while (1) {
-        int frsock;
+        int frsock = -1;
+        myMasterFileDescReadSet = myActiveFileDesc;
 
-        memcpy(&readset, &livesdset, sizeof (fd_set));
-
-        /* watch for stdin, hJoinSock and other peer sockets */
-        if (select(livesdmax + 1, &readset, NULL, NULL, NULL) == -1) {
-            perror("select");
-            exit(1);
+        /* watch for stdin, myLocalJoinServerSocket and other peer sockets */
+        if (select(myActiveFileDescMax + 1, &myMasterFileDescReadSet, NULL, NULL, NULL) < 0) {
+            perror("select failure");
+            exit(EXIT_FAILURE);
         }
 
         /* check lookup requests from neighboring peers */
-        for (frsock = 3; frsock <= livesdmax; frsock++) {
-            /* 
-               frsock starts from 3 since descriptor 0, 1 and 2 are
-               stdin, stdout and stderr
-             */
-            if (frsock == hJoinSock) continue;
+        for (frsock = 3; frsock <= myActiveFileDescMax; frsock++) {
+            //frsock starts from 3: stdin = 0, stdout = 1, stderr = 2
+            if (frsock == myLocalJoinServerSocket) continue;
 
-            if (FD_ISSET(frsock, &readset)) {
+            if (FD_ISSET(frsock, &myMasterFileDescReadSet)) {
                 /*
                   FILL HERE:
                   1. Read message from socket 'frsock';
@@ -144,8 +146,8 @@ int main(int argc, char *argv[]) {
         }
 
         /* input message from stdin */
-        if (FD_ISSET(0, &readset)) {
-            if (!fgets(szBuffer, MAXMSGLEN, stdin)) exit(0);
+        if (FD_ISSET(0, &myMasterFileDescReadSet)) {
+            if (!fgets(szBuffer, MAXMSGLEN, stdin)) exit(EXIT_FAILURE);
 
             /*
               FILL HERE:
@@ -160,14 +162,20 @@ int main(int argc, char *argv[]) {
              */
         }
 
-        /* join request on hJoinSock from a new peer */
-        if (FD_ISSET(hJoinSock, &readset)) {
-            /*
-              FILL HERE:
-              1. Accept connection request for new joining peer host.
-              2. Update 'livesdset' and 'livesdmax'
-              3. print out message like "admin: join from 'venus.cs.umn.edu' at '34234'"
-             */
+        /* join request on myLocalJoinServerSocket from a new peer */
+        if (FD_ISSET(myLocalJoinServerSocket, &myMasterFileDescReadSet)) {
+            int newsocketfd = AcceptConnection(myLocalJoinServerSocket);
+            if (newsocketfd < 0) {
+                perror("AcceptConnection failure");
+            } else {
+                FD_SET(newsocketfd, &myActiveFileDesc);
+                myActiveFileDescMax = MaximumHelper(myActiveFileDescMax, newsocketfd);
+
+                char aRemoteHostName[MAXNAMELEN];
+                unsigned short aRemotePortNum;
+                RemoteSocketInfo(newsocketfd, aRemoteHostName, &aRemotePortNum);
+                printf("admin - join from %s:%hu\n", aRemoteHostName, aRemotePortNum);
+            }
         }
     }
 }
