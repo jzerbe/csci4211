@@ -165,7 +165,7 @@ int AcceptConnection(int sockfd) {
  * read into a buffer from a certain file descriptor
  * @param fd int - the file descriptor to read from
  * @param buff char* - buffer to fill with the read message
- * @param size int - maximum number of bytes to read, 2 less buffer size
+ * @param size int - maximum number of bytes to read, last byte will be '\0'
  * @return int - number of bytes read, -1 on error
  */
 int ReadMsg(int fd, char* buff, int size) {
@@ -183,7 +183,7 @@ int ReadMsg(int fd, char* buff, int size) {
  * write to a certain file descriptor from a buffer
  * @param fd int - the file descriptor to write to
  * @param buff char* - buffer containing message to write
- * @param size int - maximum number of byte to write, 1 less than buffer size
+ * @param size int - maximum number of bytes to write
  * @return int - number of bytes written, -1 on error
  */
 int SendMsg(int fd, char* buff, int size) {

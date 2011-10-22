@@ -18,6 +18,19 @@
 #include <sys/types.h>
 #include "sockcomm.h"
 
+#define true 1
+#define false 0
+#define bool char
+
+/**
+ * generic signal handler
+ * @param theSignalNumber int - the signal type number
+ */
+void signalHandler(int theSignalNumber) {
+    printf("Signal %d caught, please wait while I shutdown", theSignalNumber);
+    exit(0);
+}
+
 /**
  * join tree P2P network through other host
  * @param peerhost char* - the name of the bootstrap peer
@@ -40,6 +53,13 @@ int join(char *peerhost, unsigned short peerport) {
 }
 
 int main(int argc, char *argv[]) {
+    //install SIGINT signal handler
+    struct sigaction my_sigaction_sigint;
+    my_sigaction_sigint.sa_handler = signalHandler;
+    sigemptyset(&my_sigaction_sigint.sa_mask);
+    my_sigaction_sigint.sa_flags = 0;
+    sigaction(SIGINT, &my_sigaction_sigint, NULL);
+
     //check if we have adequate parameters
     if (argc != 2 && argc != 3) {
         printf("Usage: %s <directory pathname> [<peer name>]\n", argv[0]);
@@ -107,12 +127,10 @@ int main(int argc, char *argv[]) {
     }
     //set the maximum number of sockets to select
     int myActiveFileDescMax = MaximumHelper(myLocalJoinServerSocket, myBootStrapPeerSock);
+    //halt program next select cycle?
+    bool haltProgram = false;
 
-    char szBuffer[2048];
-    int hListenSock;
-    int hDataSock;
-
-    //more on select loops --> http://www.tenouk.com/Module41.html
+    //select loop
     while (1) {
         int frsock = -1;
         myMasterFileDescReadSet = myActiveFileDesc;
@@ -147,7 +165,13 @@ int main(int argc, char *argv[]) {
 
         /* input message from stdin */
         if (FD_ISSET(0, &myMasterFileDescReadSet)) {
-            if (!fgets(szBuffer, MAXMSGLEN, stdin)) exit(EXIT_FAILURE);
+            char aStdInBuffer[2048];
+            if (!fgets(aStdInBuffer, MAXMSGLEN, stdin)) exit(EXIT_FAILURE);
+
+            //handle "quit" from STDIN
+            if (strncmp(aStdInBuffer, "quit", MAXMSGLEN) == 0) {
+                haltProgram = true;
+            }
 
             /*
               FILL HERE:
