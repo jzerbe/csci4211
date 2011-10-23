@@ -13,18 +13,16 @@
 #include <sys/uio.h>
 #include <unistd.h>
 
-const int LISTEN_BACKLOG = 10;
-
-#define JOIN_PORT 8000
+#define JOIN_PORT 8831
 #define MAXMSGLEN  1024
 #define MAXNAMELEN 128
 
 void ExitError(const char*);
 int MaximumHelper(int, int);
-int ConnectToServer(char*, unsigned short);
-void LocalSocketInfo(int, char*, unsigned short*);
-void RemoteSocketInfo(int, char*, unsigned short*);
-int SocketInit(unsigned short);
+int ConnectToServer(char*, int);
+void RemoteSocketInfo(int, char*, int*);
+int SocketInit(int);
+void LocalSocketInfo(int, char*, int*);
 int AcceptConnection(int);
 int ReadMsg(int, char*, int);
 int SendMsg(int, char*, int);

@@ -7,14 +7,10 @@ FLAGS = -Wall #normal
 
 CC = gcc #g++
 CEXT = c #cpp
-LIBOPTS = -lnsl -lsocket #just -lnsl is needed on solaris
+LIBOPTS = #-lnsl
 
 .PHONY: all
-all: build
-
-.PHONY: build
-build: peer
-	cp peer dist/
+all: peer
 
 peer: sockcomm.o
 	${CC} ${LIBOPTS} ${FLAGS} src/$@.${CEXT} $^ -o $@

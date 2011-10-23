@@ -9,8 +9,10 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <netdb.h>
 #include <netinet/in.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -23,27 +25,45 @@
 #define bool char
 
 /**
+ * utility function for replacing chars
+ * @param buff char* - the read/write char array
+ * @param oldChar char - the char to search for
+ * @param newChar char - the char to replace with
+ * @param maxSearchLength unsigned int - the maximum number of elements to traverse
+ */
+void replaceChars(char* buff, char oldChar, char newChar, unsigned int maxSearchLength) {
+    if ((buff == NULL) || (maxSearchLength < 0) || (maxSearchLength > UINT_MAX)) return;
+
+    unsigned int i = 0;
+    for (i = 0; i < maxSearchLength; i++) {
+        if (buff[i] == oldChar) buff[i] = newChar;
+    }
+}
+
+/**
  * generic signal handler
  * @param theSignalNumber int - the signal type number
  */
 void signalHandler(int theSignalNumber) {
-    printf("Signal %d caught, please wait while I shutdown", theSignalNumber);
-    exit(0);
+    printf("\nSignal %d caught\n", theSignalNumber);
+    if (theSignalNumber == 2) { //SIGINT
+        exit(0);
+    }
 }
 
 /**
  * join tree P2P network through other host
  * @param peerhost char* - the name of the bootstrap peer
- * @param peerport unsigned short - the port number on the bootstrap peer
+ * @param peerport int - the port number on the bootstrap peer
  * @return int - the socket file descriptor, -1 on error
  */
-int join(char *peerhost, unsigned short peerport) {
+int join(char *peerhost, int peerport) {
     int sd = ConnectToServer(peerhost, peerport);
     if (sd < 0) {
         return -1;
     }
 
-    unsigned short aLocalPortNum;
+    int aLocalPortNum;
     LocalSocketInfo(sd, NULL, &aLocalPortNum);
 
     printf("admin - connected to peer host on %s:%hu through %hu\n",
@@ -77,7 +97,7 @@ int main(int argc, char *argv[]) {
     strncpy(mySharePathCharArray, argv[1], 255);
     mySharePathCharArray[255] = '\0';
     if ((myShareDirPointer = opendir(mySharePathCharArray)) == NULL) {
-        printf("unable to open share directory '%s'\n", mySharePathCharArray);
+        printf("main: opendir failure - unable to open share directory '%s'\n", mySharePathCharArray);
         exit(EXIT_FAILURE);
     } else { //directory was opened
         filelist[0] = '\0';
@@ -92,10 +112,10 @@ int main(int argc, char *argv[]) {
     }
 
 
-    //start local server
+    //start local join server listener on free port
     int myLocalJoinServerSocket = SocketInit(JOIN_PORT);
     if (myLocalJoinServerSocket < 0) {
-        perror("unable to start local join server socket");
+        perror("main: SocketInit failure - unable to create join listener socket");
         exit(EXIT_FAILURE);
     }
     //grab local address information
@@ -110,7 +130,7 @@ int main(int argc, char *argv[]) {
         // connect to a known peer in the system
         myBootStrapPeerSock = join(argv[2], JOIN_PORT);
         if (myBootStrapPeerSock < 0) {
-            perror("unable to connect to bootstrap peer");
+            perror("main: join failure - unable to connect to bootstrap peer");
             exit(EXIT_FAILURE);
         }
     }
@@ -119,16 +139,15 @@ int main(int argc, char *argv[]) {
     //select loop variables
     fd_set myMasterFileDescReadSet; //automatically updated each select loop - DO NOT TOUCH
     fd_set myActiveFileDesc; //track active descriptors - set to update in logic
-    FD_ZERO(myMasterFileDescReadSet);
-    FD_ZERO(myActiveFileDesc);
+    FD_ZERO(&myMasterFileDescReadSet);
+    FD_ZERO(&myActiveFileDesc);
+    FD_SET(STDIN_FILENO, &myActiveFileDesc); //we do want to read from STDIN
     FD_SET(myLocalJoinServerSocket, &myActiveFileDesc);
     if (myBootStrapPeerSock > -1) { //only add the bootstrap socket if used
         FD_SET(myBootStrapPeerSock, &myActiveFileDesc);
     }
     //set the maximum number of sockets to select
     int myActiveFileDescMax = MaximumHelper(myLocalJoinServerSocket, myBootStrapPeerSock);
-    //halt program next select cycle?
-    bool haltProgram = false;
 
     //select loop
     while (1) {
@@ -137,7 +156,7 @@ int main(int argc, char *argv[]) {
 
         /* watch for stdin, myLocalJoinServerSocket and other peer sockets */
         if (select(myActiveFileDescMax + 1, &myMasterFileDescReadSet, NULL, NULL, NULL) < 0) {
-            perror("select failure");
+            perror("main: select failure");
             exit(EXIT_FAILURE);
         }
 
@@ -152,7 +171,7 @@ int main(int argc, char *argv[]) {
                   1. Read message from socket 'frsock';
                   2. If message size is 0, the peer host has disconnected. Print out message
                      like "admin: disconnected from 'venus.cs.umn.edu(42453)'"
-                  3. If message size is >0, inspect whehter it is a 'GET' message
+                  3. If message size is >0, inspect whether it is a 'GET' message
                   3.1. Extract file name, IP address and port number in the 'GET' message
                   3.2. Do local lookup on 'filelist' to check whether requested file is in 
                        this peerhost
@@ -160,25 +179,44 @@ int main(int argc, char *argv[]) {
                   3.4  If requested file is not here, forward 'GET' message to all neighbors except
                        the incoming one
                  */
+                char aBuff[MAXMSGLEN];
+                int aByteReadCount = ReadMsg(frsock, aBuff, MAXMSGLEN);
+                if (aByteReadCount <= 0) { //remote end hung up or error
+                    //get socket info before closing out connection on our end
+                    char aRemoteHostName[MAXNAMELEN];
+                    int aRemotePortNum;
+                    RemoteSocketInfo(frsock, aRemoteHostName, &aRemotePortNum);
+
+                    //close out connection
+                    close(frsock);
+                    FD_CLR(frsock, &myActiveFileDesc);
+                    printf("admin - disconnected %s:%hu\n", aRemoteHostName, aRemotePortNum);
+                }
             }
         }
 
         /* input message from stdin */
-        if (FD_ISSET(0, &myMasterFileDescReadSet)) {
+        if (FD_ISSET(STDIN_FILENO, &myMasterFileDescReadSet)) {
             char aStdInBuffer[2048];
             if (!fgets(aStdInBuffer, MAXMSGLEN, stdin)) exit(EXIT_FAILURE);
 
+#ifdef DEBUG
+            printf("STDIN> %s\n", aStdInBuffer);
+#endif
+
             //handle "quit" from STDIN
+            replaceChars(aStdInBuffer, '\r', '\0', MAXMSGLEN);
+            replaceChars(aStdInBuffer, '\n', '\0', MAXMSGLEN);
             if (strncmp(aStdInBuffer, "quit", MAXMSGLEN) == 0) {
-                haltProgram = true;
+                exit(0);
             }
 
             /*
               FILL HERE:
               1. Inspect whether input command is a valid 'get' command with file name
-              2. create new listen socket for future data channel setup
-              3. User fork() to generate a child process
-              4. In the child process, use select() to monitor listen socket. Set a timout
+              2. Create new listen socket for future data channel setup
+              3. Use fork() to generate a child process
+              4. In the child process, use select() to monitor listen socket. Set a timeout
                  period for the select(). If no connection after timeout, close the listen
                  socket. If select() returns with connection, use AcceptConnection() on listen
                  socket to setup data connection. Then, download the file from remote peer.
@@ -190,16 +228,18 @@ int main(int argc, char *argv[]) {
         if (FD_ISSET(myLocalJoinServerSocket, &myMasterFileDescReadSet)) {
             int newsocketfd = AcceptConnection(myLocalJoinServerSocket);
             if (newsocketfd < 0) {
-                perror("AcceptConnection failure");
+                perror("main: AcceptConnection failure - unable to accept new peer");
             } else {
                 FD_SET(newsocketfd, &myActiveFileDesc);
                 myActiveFileDescMax = MaximumHelper(myActiveFileDescMax, newsocketfd);
 
                 char aRemoteHostName[MAXNAMELEN];
-                unsigned short aRemotePortNum;
+                int aRemotePortNum;
                 RemoteSocketInfo(newsocketfd, aRemoteHostName, &aRemotePortNum);
                 printf("admin - join from %s:%hu\n", aRemoteHostName, aRemotePortNum);
             }
         }
     }
+
+    return 0;
 }
