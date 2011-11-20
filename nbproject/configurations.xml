@@ -31,7 +31,7 @@
       <makefileType>
         <makeTool>
           <buildCommandWorkingDir>.</buildCommandWorkingDir>
-          <buildCommand>${MAKE} -f Makefile build</buildCommand>
+          <buildCommand>${MAKE} -f Makefile all</buildCommand>
           <cleanCommand>${MAKE} -f Makefile clean</cleanCommand>
           <executablePath>dist/peer</executablePath>
           <cTool>

@@ -12,11 +12,14 @@ LIBOPTS = #-lnsl
 .PHONY: all
 all: peer
 
-peer: sockcomm.o
+peer: sockcomm.o argparse.o
 	${CC} ${LIBOPTS} ${FLAGS} src/$@.${CEXT} $^ -o $@
 
 sockcomm.o:
 	${CC} ${FLAGS} -c src/sockcomm.${CEXT} -o $@
+
+argparse.o:
+	${CC} ${FLAGS} -c src/argparse.${CEXT} -o $@
 
 # removes binaries and compiled object files from build directory
 .PHONY: clean

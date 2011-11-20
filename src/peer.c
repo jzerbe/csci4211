@@ -1,7 +1,7 @@
 /**
  * csci4211 Fall 2011
  * Programming Assignment: Simple File Sharing System
- * 
+ *
  * peer.c - main peer program source file
  */
 
@@ -18,11 +18,16 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/types.h>
-#include "sockcomm.h"
+#include "./sockcomm.h"
+#include "./argparse.h"
 
 #define true 1
 #define false 0
 #define bool char
+
+#ifndef size_t
+#define size_t unsigned int
+#endif
 
 /**
  * utility function for replacing chars
@@ -72,6 +77,42 @@ int join(char *peerhost, int peerport) {
     return (sd);
 }
 
+/**
+ * index the directory and put a '\n' delimited list of files in the buffer
+ * @param theSharePathStr char* - the share path string
+ * @param theFileListBuffer char* - the string buffer to fill
+ * @param theBufSize size_t - how big is the buffer?
+ * @return int - return -1 on error
+ */
+int indexShareDir(char* theSharePathStr, char* theFileListBuffer, size_t theBufSize) {
+    //shared file list global variables
+    char aSharePathCharArray[256];
+    DIR *aShareDirPointer;
+    struct dirent *aShareDirEntry;
+
+    //grab shared file list
+    strncpy(aSharePathCharArray, theSharePathStr, 255);
+    aSharePathCharArray[255] = '\0';
+    if ((aShareDirPointer = opendir(aSharePathCharArray)) == NULL) {
+#ifdef DEBUG
+        printf("main: opendir failure - unable to open share directory '%s'\n", aSharePathCharArray);
+#endif
+        return -1;
+    } else { //directory was opened
+        memset(theFileListBuffer, '\0', theBufSize);
+        while ((aShareDirEntry = readdir(aShareDirPointer)) != NULL) {
+            if ((strncmp(aShareDirEntry->d_name, ".", 2) == 0) ||
+                    (strncmp(aShareDirEntry->d_name, "..", 2) == 0))
+                continue;
+            strcat(theFileListBuffer, aShareDirEntry->d_name); //TODO: use strncat
+            strcat(theFileListBuffer, "\n"); //TODO: use strncat
+        }
+        closedir(aShareDirPointer);
+    }
+
+    return 0;
+}
+
 int main(int argc, char *argv[]) {
     //install SIGINT signal handler
     struct sigaction my_sigaction_sigint;
@@ -87,30 +128,12 @@ int main(int argc, char *argv[]) {
     }
 
 
-    //shared file list global variables
-    char mySharePathCharArray[256];
-    DIR *myShareDirPointer;
-    struct dirent *myShareDirEntry;
-    char filelist[2048]; //file names in share directory, separated by '\r\n'
-
-    //grab shared file list
-    strncpy(mySharePathCharArray, argv[1], 255);
-    mySharePathCharArray[255] = '\0';
-    if ((myShareDirPointer = opendir(mySharePathCharArray)) == NULL) {
-        printf("main: opendir failure - unable to open share directory '%s'\n", mySharePathCharArray);
+    //index the shared directory
+    char myFileIndexString[2048];
+    if (indexShareDir(argv[1], myFileIndexString, 2048) != 0) {
+        perror("main: indexShareDir failure");
         exit(EXIT_FAILURE);
-    } else { //directory was opened
-        filelist[0] = '\0';
-        while ((myShareDirEntry = readdir(myShareDirPointer)) != NULL) {
-            if ((strncmp(myShareDirEntry->d_name, ".", 2) == 0) ||
-                    (strncmp(myShareDirEntry->d_name, "..", 2) == 0))
-                continue;
-            strcat(filelist, myShareDirEntry->d_name); //TODO: use strncat
-            strcat(filelist, "\r\n"); //TODO: use strncat
-        }
-        closedir(myShareDirPointer);
     }
-
 
     //start local join server listener on free port
     int myLocalJoinServerSocket = SocketInit(JOIN_PORT);
@@ -173,7 +196,7 @@ int main(int argc, char *argv[]) {
                      like "admin: disconnected from 'venus.cs.umn.edu(42453)'"
                   3. If message size is >0, inspect whether it is a 'GET' message
                   3.1. Extract file name, IP address and port number in the 'GET' message
-                  3.2. Do local lookup on 'filelist' to check whether requested file is in 
+                  3.2. Do local lookup on 'filelist' to check whether requested file is in
                        this peerhost
                   3.3  If requested file presents, make connection to originating host and send data
                   3.4  If requested file is not here, forward 'GET' message to all neighbors except
@@ -204,11 +227,23 @@ int main(int argc, char *argv[]) {
             printf("STDIN> %s\n", aStdInBuffer);
 #endif
 
-            //handle "quit" from STDIN
+            //make sure the input in properly formatted
             replaceChars(aStdInBuffer, '\r', '\0', MAXMSGLEN);
             replaceChars(aStdInBuffer, '\n', '\0', MAXMSGLEN);
-            if (strncmp(aStdInBuffer, "quit", MAXMSGLEN) == 0) {
+
+            //what operation are we doing?
+            if (strncmp(aStdInBuffer, "quit", 4) == 0) {
                 exit(0);
+            } else if (strncmp(aStdInBuffer, "list", 4) == 0) {
+                printf("\nShared Files:\n%s\n", myFileIndexString);
+            } else if (strncmp(aStdInBuffer, "get ", 4) == 0) {
+                int argc;
+                char** argv;
+                if (createArgcArgv(aStdInBuffer, &argc, &argv) == 0) {
+                    if (argc == 2) {
+                        //
+                    }
+                }
             }
 
             /*

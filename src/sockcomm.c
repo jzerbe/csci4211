@@ -16,7 +16,7 @@ void ExitError(const char* theErrorMessage) {
 /**
  * returns the greater of a and b. if both are equivalent, a is returned
  * @see http://www.cplusplus.com/reference/algorithm/max/
- * 
+ *
  * @param a int
  * @param b int
  * @return int
