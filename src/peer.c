@@ -78,6 +78,30 @@ int join(char *peerhost, int peerport) {
 }
 
 /**
+ * get a file descriptor for a local file - update share path if needed
+ * @param theSharePathStr char* - the share path
+ * @param theShareFileStr char* - the file we want a fd for
+ * @return int - the file descriptor, -1 on error
+ */
+int getLocalFileDescriptor(char* theSharePathStr, char* theShareFileStr) {
+    int aLocalFileDescriptor = -1;
+
+    unsigned int aSharePathSize = strnlen(theSharePathStr, FILENAME_MAX);
+    if (theSharePathStr[(aSharePathSize - 2)] != '/') {
+        theSharePathStr = realloc(theSharePathStr, (sizeof (theSharePathStr) + (char)));
+        theSharePathStr[(aSharePathSize - 1)] = '/';
+        theSharePathStr[aSharePathSize] = '\0';
+    }
+
+    char aFilePath[((aSharePathSize + 1) + strnlen(theShareFileStr, FILENAME_MAX))];
+    strncpy(aFilePath, theSharePathStr, FILENAME_MAX);
+    strncat(aFilePath, theShareFileStr, FILENAME_MAX);
+    aLocalFileDescriptor = open(aFilePath, O_RDONLY);
+
+    return aLocalFileDescriptor;
+}
+
+/**
  * index the directory and put a '\n' delimited list of files in the buffer
  * @param theSharePathStr char* - the share path string
  * @param theFileListBuffer char* - the string buffer to fill
@@ -113,6 +137,30 @@ int indexShareDir(char* theSharePathStr, char* theFileListBuffer, size_t theBufS
     return 0;
 }
 
+/**
+ * check for a certain filename if it is in the shared index
+ * @param theFileIndexStr char* - the "\n" delimited list of shared files
+ * @param theFileName char* - the filename to search for in the index
+ * @return bool - do we have file in index?
+ */
+bool fileExistsInIndex(char* theFileIndexStr, char* theFileName) {
+    if ((theFileIndexStr == NULL) || (theFileName == NULL)) return false;
+
+    char* saveptr;
+    char* pch = strtok_r(theFileIndexStr, "\n", &saveptr);
+
+    while (pch != NULL) {
+        replaceChars(pch, '\r', '\0', FILENAME_MAX);
+        replaceChars(pch, '\n', '\0', FILENAME_MAX);
+        replaceChars(theFileName, '\r', '\0', FILENAME_MAX);
+        replaceChars(theFileName, '\n', '\0', FILENAME_MAX);
+        if (strncmp(pch, theFileName, FILENAME_MAX) == 0) return true;
+        pch = strtok_r(NULL, "\n", &saveptr);
+    }
+
+    return false;
+}
+
 int main(int argc, char *argv[]) {
     //install SIGINT signal handler
     struct sigaction my_sigaction_sigint;
@@ -129,7 +177,7 @@ int main(int argc, char *argv[]) {
 
 
     //index the shared directory
-    char myFileIndexString[2048];
+    char myFileIndexString[(FILENAME_MAX * 20)];
     if (indexShareDir(argv[1], myFileIndexString, 2048) != 0) {
         perror("main: indexShareDir failure");
         exit(EXIT_FAILURE);
@@ -214,6 +262,36 @@ int main(int argc, char *argv[]) {
                     close(frsock);
                     FD_CLR(frsock, &myActiveFileDesc);
                     printf("admin - disconnected %s:%hu\n", aRemoteHostName, aRemotePortNum);
+                } else if (strncmp(aBuff, "get ", 4) == 0) {
+                    int get_argc;
+                    char** get_argv;
+                    if (createArgcArgv(aBuff, &get_argc, &get_argv) == 0) {
+                        if (get_argc == 4) { //valid - get [filename] [src address] [data port]
+                            if (fileExistsInIndex(myFileIndexString, get_argv[1])) { //return data to requester
+                                char aLocalFilePathStr[FILENAME_MAX];
+                                memset(aLocalFilePathStr, '\0', FILENAME_MAX);
+                                strcpy(aLocalFilePathStr, get_argv[1]);
+
+                                int aLocalFileFd = getLocalFileDescriptor(argv[1], aLocalFilePathStr);
+                                unsigned int aTransferBufferSize = 512;
+                                char aTransferBuffer[aTransferBufferSize];
+                                int numbytes;
+                                if (aLocalFileFd >= 0) {
+                                    int aPort = get_argv[3][0] - '0'; //http://stackoverflow.com/q/868508
+                                    int aTransferFd = ConnectToServer(get_argv[2], aPort);
+
+                                    while ((numbytes = read(aLocalFileFd, aTransferBuffer, aTransferBufferSize - 1)) > 0) {
+                                        aTransferBuffer[numbytes] = '\0';
+                                        if (SendMsg(aTransferFd, aTransferBuffer, numbytes) < 0) {
+                                            close(aTransferFd);
+                                        }
+                                    }
+                                }
+                                close(aLocalFileFd);
+                            } else { //forward request to all peers except incoming
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -237,11 +315,13 @@ int main(int argc, char *argv[]) {
             } else if (strncmp(aStdInBuffer, "list", 4) == 0) {
                 printf("\nShared Files:\n%s\n", myFileIndexString);
             } else if (strncmp(aStdInBuffer, "get ", 4) == 0) {
-                int argc;
-                char** argv;
-                if (createArgcArgv(aStdInBuffer, &argc, &argv) == 0) {
-                    if (argc == 2) {
-                        //
+                int get_argc;
+                char** get_argv;
+                if (createArgcArgv(aStdInBuffer, &get_argc, &get_argv) == 0) {
+                    if (get_argc == 2) {
+                        if (!fileExistsInIndex(myFileIndexString, get_argv[1])) {
+                            //need to search for file
+                        }
                     }
                 }
             }
