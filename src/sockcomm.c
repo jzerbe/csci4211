@@ -79,8 +79,9 @@ int ConnectToServer(char* hostname, int port) {
  * @param sockfd int - the socket file descriptor
  * @param hostname char* - pointer to buffer to fill of size at least MAXNAMELEN
  * @param port int* - pointer to fill with port number
+ * @param hostname_bool bool - true if want hostname, false if want ip address
  */
-void RemoteSocketInfo(int sockfd, char* hostname, int* port) {
+void RemoteSocketInfo(int sockfd, char* hostname, int* port, bool hostname_bool) {
     struct sockaddr_in remote_addr;
     socklen_t remote_addr_len = sizeof (remote_addr);
     if (getpeername(sockfd, (struct sockaddr*) &remote_addr, &remote_addr_len) == 0) {
@@ -91,7 +92,7 @@ void RemoteSocketInfo(int sockfd, char* hostname, int* port) {
                     (char *) &remote_addr.sin_addr.s_addr,
                     sizeof (remote_addr.sin_addr.s_addr), AF_INET);
 
-            if (myhostent == NULL) { //unable to find hostname  - fail gracefully
+            if ((hostname_bool) || (myhostent == NULL)) { //do not or unable find hostname
                 strncpy(hostname, inet_ntoa(remote_addr.sin_addr), MAXNAMELEN);
             } else { //found hostname
                 strncpy(hostname, myhostent->h_name, MAXNAMELEN);

@@ -16,18 +16,18 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/poll.h>
 #include <sys/socket.h>
 #include <sys/types.h>
+#include <unistd.h>
 #include "./sockcomm.h"
-#include "./argparse.h"
-
-#define true 1
-#define false 0
-#define bool char
 
 #ifndef size_t
 #define size_t unsigned int
 #endif
+
+static unsigned int myDataTransferPortNumber = 36911;
+static int myLocalJoinServerSocket;
 
 /**
  * utility function for replacing chars
@@ -46,59 +46,30 @@ void replaceChars(char* buff, char oldChar, char newChar, unsigned int maxSearch
 }
 
 /**
- * generic signal handler
- * @param theSignalNumber int - the signal type number
+ * check for a certain filename if it is in the shared index
+ * @param theFileIndexStr char* - the "\n" delimited list of shared files
+ * @param theFileName char* - the filename to search for in the index
+ * @return bool - do we have file in index?
  */
-void signalHandler(int theSignalNumber) {
-    printf("\nSignal %d caught\n", theSignalNumber);
-    if (theSignalNumber == 2) { //SIGINT
-        exit(0);
-    }
-}
+bool fileExistsInIndex(char* theFileIndexStr, char* theFileName) {
+    if ((theFileIndexStr == NULL) || (theFileName == NULL)) return false;
 
-/**
- * join tree P2P network through other host
- * @param peerhost char* - the name of the bootstrap peer
- * @param peerport int - the port number on the bootstrap peer
- * @return int - the socket file descriptor, -1 on error
- */
-int join(char *peerhost, int peerport) {
-    int sd = ConnectToServer(peerhost, peerport);
-    if (sd < 0) {
-        return -1;
-    }
+    char aWorkingFileIndexStr[strlen(theFileIndexStr)];
+    strcpy(aWorkingFileIndexStr, theFileIndexStr); //create temp, as it gets broken
 
-    int aLocalPortNum;
-    LocalSocketInfo(sd, NULL, &aLocalPortNum);
+    char* saveptr;
+    char* pch = strtok_r(aWorkingFileIndexStr, "\n", &saveptr);
 
-    printf("admin - connected to peer host on %s:%hu through %hu\n",
-            peerhost, peerport, aLocalPortNum);
-
-    return (sd);
-}
-
-/**
- * get a file descriptor for a local file - update share path if needed
- * @param theSharePathStr char* - the share path
- * @param theShareFileStr char* - the file we want a fd for
- * @return int - the file descriptor, -1 on error
- */
-int getLocalFileDescriptor(char* theSharePathStr, char* theShareFileStr) {
-    int aLocalFileDescriptor = -1;
-
-    unsigned int aSharePathSize = strnlen(theSharePathStr, FILENAME_MAX);
-    if (theSharePathStr[(aSharePathSize - 2)] != '/') {
-        theSharePathStr = realloc(theSharePathStr, (sizeof (theSharePathStr) + (char)));
-        theSharePathStr[(aSharePathSize - 1)] = '/';
-        theSharePathStr[aSharePathSize] = '\0';
+    while (pch != NULL) {
+        replaceChars(pch, '\r', '\0', FILENAME_MAX);
+        replaceChars(pch, '\n', '\0', FILENAME_MAX);
+        replaceChars(theFileName, '\r', '\0', FILENAME_MAX);
+        replaceChars(theFileName, '\n', '\0', FILENAME_MAX);
+        if (strncmp(pch, theFileName, FILENAME_MAX) == 0) return true;
+        pch = strtok_r(NULL, "\n", &saveptr);
     }
 
-    char aFilePath[((aSharePathSize + 1) + strnlen(theShareFileStr, FILENAME_MAX))];
-    strncpy(aFilePath, theSharePathStr, FILENAME_MAX);
-    strncat(aFilePath, theShareFileStr, FILENAME_MAX);
-    aLocalFileDescriptor = open(aFilePath, O_RDONLY);
-
-    return aLocalFileDescriptor;
+    return false;
 }
 
 /**
@@ -138,27 +109,36 @@ int indexShareDir(char* theSharePathStr, char* theFileListBuffer, size_t theBufS
 }
 
 /**
- * check for a certain filename if it is in the shared index
- * @param theFileIndexStr char* - the "\n" delimited list of shared files
- * @param theFileName char* - the filename to search for in the index
- * @return bool - do we have file in index?
+ * join tree P2P network through other host
+ * @param peerhost char* - the name of the bootstrap peer
+ * @param peerport int - the port number on the bootstrap peer
+ * @return int - the socket file descriptor, -1 on error
  */
-bool fileExistsInIndex(char* theFileIndexStr, char* theFileName) {
-    if ((theFileIndexStr == NULL) || (theFileName == NULL)) return false;
-
-    char* saveptr;
-    char* pch = strtok_r(theFileIndexStr, "\n", &saveptr);
-
-    while (pch != NULL) {
-        replaceChars(pch, '\r', '\0', FILENAME_MAX);
-        replaceChars(pch, '\n', '\0', FILENAME_MAX);
-        replaceChars(theFileName, '\r', '\0', FILENAME_MAX);
-        replaceChars(theFileName, '\n', '\0', FILENAME_MAX);
-        if (strncmp(pch, theFileName, FILENAME_MAX) == 0) return true;
-        pch = strtok_r(NULL, "\n", &saveptr);
+int join(char *peerhost, int peerport) {
+    int sd = ConnectToServer(peerhost, peerport);
+    if (sd < 0) {
+        return -1;
     }
 
-    return false;
+    int aLocalPortNum;
+    LocalSocketInfo(sd, NULL, &aLocalPortNum);
+
+    printf("admin - connected to peer host on %s:%hu through %hu\n",
+            peerhost, peerport, aLocalPortNum);
+
+    return (sd);
+}
+
+/**
+ * generic signal handler
+ * @param theSignalNumber int - the signal type number
+ */
+void signalHandler(int theSignalNumber) {
+    printf("\nSignal %d caught\n", theSignalNumber);
+    if (theSignalNumber == 2) { //SIGINT
+        close(myLocalJoinServerSocket);
+        exit(0);
+    }
 }
 
 int main(int argc, char *argv[]) {
@@ -175,16 +155,21 @@ int main(int argc, char *argv[]) {
         exit(EXIT_SUCCESS);
     }
 
+    //check to make sure shared dir has trailing slash
+    if (argv[1][(strnlen(argv[1], FILENAME_MAX) - 1)] != '/') {
+        perror("main: shared directory does not have trailing slash");
+        exit(EXIT_FAILURE);
+    }
 
     //index the shared directory
     char myFileIndexString[(FILENAME_MAX * 20)];
-    if (indexShareDir(argv[1], myFileIndexString, 2048) != 0) {
+    if (indexShareDir(argv[1], myFileIndexString, (FILENAME_MAX * 20)) != 0) {
         perror("main: indexShareDir failure");
         exit(EXIT_FAILURE);
     }
 
     //start local join server listener on free port
-    int myLocalJoinServerSocket = SocketInit(JOIN_PORT);
+    myLocalJoinServerSocket = SocketInit(JOIN_PORT);
     if (myLocalJoinServerSocket < 0) {
         perror("main: SocketInit failure - unable to create join listener socket");
         exit(EXIT_FAILURE);
@@ -227,7 +212,7 @@ int main(int argc, char *argv[]) {
 
         /* watch for stdin, myLocalJoinServerSocket and other peer sockets */
         if (select(myActiveFileDescMax + 1, &myMasterFileDescReadSet, NULL, NULL, NULL) < 0) {
-            perror("main: select failure");
+            perror("main: master select failure");
             exit(EXIT_FAILURE);
         }
 
@@ -237,58 +222,106 @@ int main(int argc, char *argv[]) {
             if (frsock == myLocalJoinServerSocket) continue;
 
             if (FD_ISSET(frsock, &myMasterFileDescReadSet)) {
-                /*
-                  FILL HERE:
-                  1. Read message from socket 'frsock';
-                  2. If message size is 0, the peer host has disconnected. Print out message
-                     like "admin: disconnected from 'venus.cs.umn.edu(42453)'"
-                  3. If message size is >0, inspect whether it is a 'GET' message
-                  3.1. Extract file name, IP address and port number in the 'GET' message
-                  3.2. Do local lookup on 'filelist' to check whether requested file is in
-                       this peerhost
-                  3.3  If requested file presents, make connection to originating host and send data
-                  3.4  If requested file is not here, forward 'GET' message to all neighbors except
-                       the incoming one
-                 */
                 char aBuff[MAXMSGLEN];
                 int aByteReadCount = ReadMsg(frsock, aBuff, MAXMSGLEN);
                 if (aByteReadCount <= 0) { //remote end hung up or error
                     //get socket info before closing out connection on our end
                     char aRemoteHostName[MAXNAMELEN];
                     int aRemotePortNum;
-                    RemoteSocketInfo(frsock, aRemoteHostName, &aRemotePortNum);
+                    RemoteSocketInfo(frsock, aRemoteHostName, &aRemotePortNum, true);
 
                     //close out connection
                     close(frsock);
                     FD_CLR(frsock, &myActiveFileDesc);
                     printf("admin - disconnected %s:%hu\n", aRemoteHostName, aRemotePortNum);
-                } else if (strncmp(aBuff, "get ", 4) == 0) {
-                    int get_argc;
-                    char** get_argv;
-                    if (createArgcArgv(aBuff, &get_argc, &get_argv) == 0) {
-                        if (get_argc == 4) { //valid - get [filename] [src address] [data port]
-                            if (fileExistsInIndex(myFileIndexString, get_argv[1])) { //return data to requester
+                } else {
+#ifdef DEBUG
+                    printf("incoming aBuff = '%s'\n", aBuff);
+#endif
+                    if (strncmp(aBuff, "get", 3) == 0) {
+                        char aRequestFileName[MAXMSGLEN];
+                        char aRequestSourceAddress[MAXMSGLEN];
+                        char aRequestPortNumber[MAXMSGLEN];
+
+                        int get_argc = 0;
+                        char* saveptr;
+                        char* pch = strtok_r(aBuff, " ", &saveptr);
+                        while (pch != NULL) {
+#ifdef DEBUG
+                            printf("incoming aBuff - pch = '%s'\n", pch);
+#endif
+                            if (strncmp(pch, "", 1) != 0) { //valid - get [filename] [src address] [data port]
+                                if (get_argc == 1) {
+                                    strcpy(aRequestFileName, pch);
+                                } else if (get_argc == 2) {
+                                    if (strncmp(pch, "0.0.0.0", 7) == 0) {
+                                        RemoteSocketInfo(frsock, aRequestSourceAddress, NULL, true);
+                                    } else {
+                                        strcpy(aRequestSourceAddress, pch);
+                                    }
+                                } else if (get_argc == 3) {
+                                    strcpy(aRequestPortNumber, pch);
+                                }
+                                get_argc++;
+                            }
+
+                            pch = strtok_r(NULL, " ", &saveptr);
+                        }
+#ifdef DEBUG
+                        printf("%i arguments in get request\n", get_argc);
+#endif
+                        if (get_argc == 4) {
+                            if (fileExistsInIndex(myFileIndexString, aRequestFileName)) { //return data to requester
                                 char aLocalFilePathStr[FILENAME_MAX];
                                 memset(aLocalFilePathStr, '\0', FILENAME_MAX);
-                                strcpy(aLocalFilePathStr, get_argv[1]);
+                                strcpy(aLocalFilePathStr, argv[1]);
+                                strcat(aLocalFilePathStr, aRequestFileName);
 
-                                int aLocalFileFd = getLocalFileDescriptor(argv[1], aLocalFilePathStr);
-                                unsigned int aTransferBufferSize = 512;
-                                char aTransferBuffer[aTransferBufferSize];
+                                int aLocalFileFd = open(aLocalFilePathStr, O_RDONLY);
+#ifdef DEBUG
+                                printf("will now use local file descriptor #%i\n", aLocalFileFd);
+#endif
+                                char aTransferBuffer[MAXMSGLEN];
                                 int numbytes;
                                 if (aLocalFileFd >= 0) {
-                                    int aPort = get_argv[3][0] - '0'; //http://stackoverflow.com/q/868508
-                                    int aTransferFd = ConnectToServer(get_argv[2], aPort);
-
-                                    while ((numbytes = read(aLocalFileFd, aTransferBuffer, aTransferBufferSize - 1)) > 0) {
-                                        aTransferBuffer[numbytes] = '\0';
-                                        if (SendMsg(aTransferFd, aTransferBuffer, numbytes) < 0) {
-                                            close(aTransferFd);
+                                    int aPort = atoi(aRequestPortNumber);
+#ifdef DEBUG
+                                    printf("connect to = '%s:%hu' in get request\n", aRequestSourceAddress, aPort);
+#endif
+                                    int aTransferFd = ConnectToServer(aRequestSourceAddress, aPort);
+                                    if (aTransferFd >= 0) { //okay to start transfer
+                                        while ((numbytes = ReadMsg(aLocalFileFd, aTransferBuffer, MAXMSGLEN - 1)) > 0) {
+                                            if (SendMsg(aTransferFd, aTransferBuffer, numbytes) < 0) {
+#ifdef DEBUG
+                                                perror("main: SendMsg failure - return data stream");
+#endif
+                                            }
                                         }
+                                        close(aTransferFd);
                                     }
                                 }
                                 close(aLocalFileFd);
-                            } else { //forward request to all peers except incoming
+                            } else { //forward request to all peers except incoming and self
+                                char aForwardBuff[MAXMSGLEN];
+                                memset(aForwardBuff, '\0', MAXMSGLEN);
+                                strncpy(aForwardBuff, "get ", MAXMSGLEN);
+                                strncat(aForwardBuff, aRequestFileName, MAXMSGLEN);
+                                strncat(aForwardBuff, " ", 1);
+                                strncat(aForwardBuff, aRequestSourceAddress, MAXMSGLEN);
+                                strncat(aForwardBuff, " ", 1);
+                                strncat(aForwardBuff, aRequestPortNumber, MAXMSGLEN);
+                                int i;
+                                for (i = 3; i <= myActiveFileDescMax; i++) {
+                                    if (FD_ISSET(i, &myActiveFileDesc)) {
+                                        if ((i != frsock) && (i != myLocalJoinServerSocket)) {
+                                            if (SendMsg(i, aForwardBuff, MAXMSGLEN) < 0) {
+#ifdef DEBUG
+                                                perror("main: SendMsg failure - forwarding of get");
+#endif
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -314,29 +347,129 @@ int main(int argc, char *argv[]) {
                 exit(0);
             } else if (strncmp(aStdInBuffer, "list", 4) == 0) {
                 printf("\nShared Files:\n%s\n", myFileIndexString);
-            } else if (strncmp(aStdInBuffer, "get ", 4) == 0) {
-                int get_argc;
-                char** get_argv;
-                if (createArgcArgv(aStdInBuffer, &get_argc, &get_argv) == 0) {
-                    if (get_argc == 2) {
-                        if (!fileExistsInIndex(myFileIndexString, get_argv[1])) {
-                            //need to search for file
+            } else if (strncmp(aStdInBuffer, "get", 3) == 0) {
+                char aRequestFileName[MAXMSGLEN];
+
+                int get_argc = 0;
+                char* saveptr;
+                char* pch = strtok_r(aStdInBuffer, " ", &saveptr);
+                while (pch != NULL) {
+#ifdef DEBUG
+                    printf("aStdInBuffer - pch = '%s'\n", pch);
+#endif
+                    if (strncmp(pch, "", 1) != 0) { //valid - get [filename]
+                        if (get_argc == 1) {
+                            strcpy(aRequestFileName, pch);
+                        }
+                        get_argc++;
+                    }
+
+                    pch = strtok_r(NULL, " ", &saveptr);
+                }
+#ifdef DEBUG
+                printf("%i arguments in get request\n", get_argc);
+#endif
+                if (get_argc == 2) {
+                    if (!fileExistsInIndex(myFileIndexString, aRequestFileName)) {
+                        //need to get file, create data transfer socket
+                        myDataTransferPortNumber++;
+                        int myDataTransferSocket;
+                        if ((myDataTransferSocket = SocketInit(myDataTransferPortNumber)) >= 0) {
+                            //fork off new process for data transfer
+                            pid_t pID = fork();
+                            if (pID == 0) { //fork child
+                                fd_set myDataTransferDesc;
+                                FD_ZERO(&myDataTransferDesc);
+                                FD_SET(myDataTransferSocket, &myDataTransferDesc);
+                                int myDataTransferDescMax = myDataTransferSocket;
+                                struct timeval timeout;
+                                timeout.tv_sec = 10;
+                                timeout.tv_usec = 0;
+                                int n = select(myDataTransferDescMax + 1, &myDataTransferDesc, NULL, NULL, &timeout);
+                                if (n < 0) { //error
+                                    perror("main: data transfer select failure");
+                                    exit(EXIT_FAILURE);
+                                } else if (n == 0) { //timeout
+#ifdef DEBUG
+                                    printf("reached select timeout\n");
+#endif
+                                    close(myDataTransferSocket);
+                                } else { //have data
+#ifdef DEBUG
+                                    printf("received data on transfer socket\n");
+#endif
+                                    if (FD_ISSET(myDataTransferSocket, &myDataTransferDesc)) {
+                                        char aLocalFilePathStr[FILENAME_MAX];
+                                        memset(aLocalFilePathStr, '\0', FILENAME_MAX);
+                                        strcpy(aLocalFilePathStr, argv[1]);
+                                        strcat(aLocalFilePathStr, aRequestFileName);
+
+                                        int aLocalFileFd = open(aLocalFilePathStr, (O_CREAT | O_RDWR));
+                                        char aTransferBuffer[MAXMSGLEN];
+                                        int numbytes;
+                                        if (aLocalFileFd >= 0) { //TODO: data transfer should use poll
+                                            int aTransferFd = AcceptConnection(myDataTransferSocket);
+                                            if (aTransferFd >= 0) { //okay to start transfer
+#ifdef DEBUG
+                                                printf("starting data transfer ...\n");
+#endif
+                                                while ((numbytes = ReadMsg(aTransferFd, aTransferBuffer, MAXMSGLEN - 1)) > 0) {
+                                                    if (SendMsg(aLocalFileFd, aTransferBuffer, numbytes) < 0) {
+#ifdef DEBUG
+                                                        perror("main: SendMsg failure - write data to file");
+#endif
+                                                    }
+                                                }
+#ifdef DEBUG
+                                                printf("done with data transfer\n");
+#endif
+                                                close(aTransferFd);
+                                            }
+                                            close(aLocalFileFd);
+                                        }
+                                    }
+                                    //add newly downloaded file to index
+                                    if (indexShareDir(argv[1], aRequestFileName, (FILENAME_MAX * 20)) != 0) {
+                                        perror("main: (re)indexShareDir failure");
+                                    }
+                                }
+                                exit(EXIT_SUCCESS); //close out child process
+                            } else if (pID > 0) { //fork parent
+                                //valid - get [filename] [src address] [data port]
+                                char aBuff[MAXMSGLEN];
+                                if (sprintf(aBuff, "get %s 0.0.0.0 %i", aRequestFileName, myDataTransferPortNumber) > 0) {
+#ifdef DEBUG
+                                    printf("message to send = '%s'\n", aBuff);
+#endif
+                                    int i; //send to all peers
+                                    for (i = 3; i <= myActiveFileDescMax; i++) {
+                                        if (FD_ISSET(i, &myActiveFileDesc)) { //TODO: messages not being sent to any peers
+                                            if ((i != myLocalJoinServerSocket) && (i != myDataTransferSocket)) {
+                                                if (SendMsg(i, aBuff, MAXMSGLEN) < 0) {
+#ifdef DEBUG
+                                                    perror("main: SendMsg failure - broadcast of get");
+#endif
+                                                } else {
+#ifdef DEBUG
+                                                    printf("send message on socket #%i\n", i);
+#endif
+                                                }
+                                            }
+                                        }
+                                    }
+#ifdef DEBUG
+                                    printf("finished sending messages to %i peers\n", (i - 4));
+#endif
+                                }
+                            } else { //fork failure
+                                perror("main: fork failure - failed to start data receiver process");
+                            }
+                        } else {
+                            perror("main: SocketInit failure - failed to create data transfer socket");
                         }
                     }
                 }
             }
-
-            /*
-              FILL HERE:
-              1. Inspect whether input command is a valid 'get' command with file name
-              2. Create new listen socket for future data channel setup
-              3. Use fork() to generate a child process
-              4. In the child process, use select() to monitor listen socket. Set a timeout
-                 period for the select(). If no connection after timeout, close the listen
-                 socket. If select() returns with connection, use AcceptConnection() on listen
-                 socket to setup data connection. Then, download the file from remote peer.
-              5. In the parent process, construct "GET" message and send it to all neighbor peers.
-             */
         }
 
         /* join request on myLocalJoinServerSocket from a new peer */
@@ -350,7 +483,7 @@ int main(int argc, char *argv[]) {
 
                 char aRemoteHostName[MAXNAMELEN];
                 int aRemotePortNum;
-                RemoteSocketInfo(newsocketfd, aRemoteHostName, &aRemotePortNum);
+                RemoteSocketInfo(newsocketfd, aRemoteHostName, &aRemotePortNum, true);
                 printf("admin - join from %s:%hu\n", aRemoteHostName, aRemotePortNum);
             }
         }

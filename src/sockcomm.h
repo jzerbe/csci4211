@@ -17,10 +17,16 @@
 #define MAXMSGLEN  1024
 #define MAXNAMELEN 128
 
+#ifndef bool
+#define true 1
+#define false 0
+#define bool char
+#endif
+
 void ExitError(const char*);
 int MaximumHelper(int, int);
 int ConnectToServer(char*, int);
-void RemoteSocketInfo(int, char*, int*);
+void RemoteSocketInfo(int, char*, int*, bool);
 int SocketInit(int);
 void LocalSocketInfo(int, char*, int*);
 int AcceptConnection(int);
