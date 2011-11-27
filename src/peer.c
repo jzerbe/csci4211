@@ -57,17 +57,25 @@ bool fileExistsInIndex(char* theFileIndexStr, char* theFileName) {
     char aWorkingFileIndexStr[strlen(theFileIndexStr)];
     strcpy(aWorkingFileIndexStr, theFileIndexStr); //create temp, as it gets broken
 
-    char* saveptr;
-    char* pch = strtok_r(aWorkingFileIndexStr, "\n", &saveptr);
+#ifdef DEBUG
+    printf("fileExistsInIndex: theFileIndexStr = '%s'\n", theFileIndexStr);
+#endif
+
+    char* saveptr_in;
+    char* pch = strtok_r(aWorkingFileIndexStr, "\n", &saveptr_in);
+
+#ifdef DEBUG
+    printf("fileExistsInIndex: theFileIndexStr = '%s'\n", theFileIndexStr);
+#endif
 
     while (pch != NULL) {
-        replaceChars(pch, '\r', '\0', FILENAME_MAX);
-        replaceChars(pch, '\n', '\0', FILENAME_MAX);
-        replaceChars(theFileName, '\r', '\0', FILENAME_MAX);
-        replaceChars(theFileName, '\n', '\0', FILENAME_MAX);
         if (strncmp(pch, theFileName, FILENAME_MAX) == 0) return true;
-        pch = strtok_r(NULL, "\n", &saveptr);
+        pch = strtok_r(NULL, "\n", &saveptr_in);
     }
+
+#ifdef DEBUG
+    printf("fileExistsInIndex: theFileIndexStr = '%s'\n", theFileIndexStr);
+#endif
 
     return false;
 }
@@ -167,6 +175,9 @@ int main(int argc, char *argv[]) {
         perror("main: indexShareDir failure");
         exit(EXIT_FAILURE);
     }
+#ifdef DEBUG
+    printf("main: myFileIndexString = '%s'\n", myFileIndexString);
+#endif
 
     //start local join server listener on free port
     myLocalJoinServerSocket = SocketInit(JOIN_PORT);
@@ -271,7 +282,13 @@ int main(int argc, char *argv[]) {
                         printf("%i arguments in get request\n", get_argc);
 #endif
                         if (get_argc == 4) {
+#ifdef DEBUG
+                            printf("main: myFileIndexString = '%s'\n", myFileIndexString);
+#endif
                             if (fileExistsInIndex(myFileIndexString, aRequestFileName)) { //return data to requester
+#ifdef DEBUG
+                                printf("main: myFileIndexString = '%s'\n", myFileIndexString);
+#endif
                                 char aLocalFilePathStr[FILENAME_MAX];
                                 memset(aLocalFilePathStr, '\0', FILENAME_MAX);
                                 strcpy(aLocalFilePathStr, argv[1]);
@@ -370,7 +387,13 @@ int main(int argc, char *argv[]) {
                 printf("%i arguments in get request\n", get_argc);
 #endif
                 if (get_argc == 2) {
+#ifdef DEBUG
+                    printf("main: myFileIndexString = '%s'\n", myFileIndexString);
+#endif
                     if (!fileExistsInIndex(myFileIndexString, aRequestFileName)) {
+#ifdef DEBUG
+                        printf("main: myFileIndexString = '%s'\n", myFileIndexString);
+#endif
                         //need to get file, create data transfer socket
                         myDataTransferPortNumber++;
                         int myDataTransferSocket;
@@ -404,16 +427,19 @@ int main(int argc, char *argv[]) {
                                         strcpy(aLocalFilePathStr, argv[1]);
                                         strcat(aLocalFilePathStr, aRequestFileName);
 
-                                        int aLocalFileFd = open(aLocalFilePathStr, (O_CREAT | O_RDWR));
+                                        int aLocalFileFd = open(aLocalFilePathStr, (O_CREAT | O_RDWR), S_IRWXU);
                                         char aTransferBuffer[MAXMSGLEN];
                                         int numbytes;
-                                        if (aLocalFileFd >= 0) { //TODO: data transfer should use poll
+                                        if (aLocalFileFd >= 0) {
                                             int aTransferFd = AcceptConnection(myDataTransferSocket);
                                             if (aTransferFd >= 0) { //okay to start transfer
 #ifdef DEBUG
                                                 printf("starting data transfer ...\n");
 #endif
                                                 while ((numbytes = ReadMsg(aTransferFd, aTransferBuffer, MAXMSGLEN - 1)) > 0) {
+#ifdef DEBUG
+                                                    printf("aTransferBuffer = '%s'\n", aTransferBuffer);
+#endif
                                                     if (SendMsg(aLocalFileFd, aTransferBuffer, numbytes) < 0) {
 #ifdef DEBUG
                                                         perror("main: SendMsg failure - write data to file");
