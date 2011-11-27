@@ -282,6 +282,10 @@ int main(int argc, char *argv[]) {
                         printf("%i arguments in get request\n", get_argc);
 #endif
                         if (get_argc == 4) {
+                            //re-index share directory, to have latest listings
+                            if (indexShareDir(argv[1], myFileIndexString, (FILENAME_MAX * 20)) != 0) {
+                                perror("main: (re)indexShareDir failure");
+                            }
 #ifdef DEBUG
                             printf("main: myFileIndexString = '%s'\n", myFileIndexString);
 #endif
@@ -363,6 +367,10 @@ int main(int argc, char *argv[]) {
             if (strncmp(aStdInBuffer, "quit", 4) == 0) {
                 exit(0);
             } else if (strncmp(aStdInBuffer, "list", 4) == 0) {
+                //re-index share directory, to have latest listings
+                if (indexShareDir(argv[1], myFileIndexString, (FILENAME_MAX * 20)) != 0) {
+                    perror("main: (re)indexShareDir failure");
+                }
                 printf("\nShared Files:\n%s\n", myFileIndexString);
             } else if (strncmp(aStdInBuffer, "get", 3) == 0) {
                 char aRequestFileName[MAXMSGLEN];
@@ -387,6 +395,10 @@ int main(int argc, char *argv[]) {
                 printf("%i arguments in get request\n", get_argc);
 #endif
                 if (get_argc == 2) {
+                    //re-index share directory, to have latest listings
+                    if (indexShareDir(argv[1], myFileIndexString, (FILENAME_MAX * 20)) != 0) {
+                        perror("main: (re)indexShareDir failure");
+                    }
 #ifdef DEBUG
                     printf("main: myFileIndexString = '%s'\n", myFileIndexString);
 #endif
@@ -413,9 +425,7 @@ int main(int argc, char *argv[]) {
                                     perror("main: data transfer select failure");
                                     exit(EXIT_FAILURE);
                                 } else if (n == 0) { //timeout
-#ifdef DEBUG
-                                    printf("reached select timeout\n");
-#endif
+                                    printf("admin - the requested file does not exist in the p2p system\n");
                                     close(myDataTransferSocket);
                                 } else { //have data
 #ifdef DEBUG
@@ -446,17 +456,11 @@ int main(int argc, char *argv[]) {
 #endif
                                                     }
                                                 }
-#ifdef DEBUG
-                                                printf("done with data transfer\n");
-#endif
+                                                printf("admin - the requested file has been downloaded\n");
                                                 close(aTransferFd);
                                             }
                                             close(aLocalFileFd);
                                         }
-                                    }
-                                    //add newly downloaded file to index
-                                    if (indexShareDir(argv[1], aRequestFileName, (FILENAME_MAX * 20)) != 0) {
-                                        perror("main: (re)indexShareDir failure");
                                     }
                                 }
                                 exit(EXIT_SUCCESS); //close out child process

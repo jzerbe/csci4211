@@ -1,8 +1,8 @@
 # csci4211 Project Master Makefile
 # Jason Zerbe - 3830775
 
-FLAGS = -Wall -g -DDEBUG #debug (includes gdb extensions)
-#FLAGS = -Wall #normal
+#FLAGS = -Wall -g -DDEBUG #debug (includes gdb extensions)
+FLAGS = -Wall #normal
 #FLAGS = -Wall -O3 -funroll-loops -march=native #optimized
 
 CC = gcc #g++
