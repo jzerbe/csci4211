@@ -418,7 +418,7 @@ int main(int argc, char *argv[]) {
                                 FD_SET(myDataTransferSocket, &myDataTransferDesc);
                                 int myDataTransferDescMax = myDataTransferSocket;
                                 struct timeval timeout;
-                                timeout.tv_sec = 10;
+                                timeout.tv_sec = 5;
                                 timeout.tv_usec = 0;
                                 int n = select(myDataTransferDescMax + 1, &myDataTransferDesc, NULL, NULL, &timeout);
                                 if (n < 0) { //error
