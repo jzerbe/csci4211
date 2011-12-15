@@ -164,7 +164,7 @@ int main(int argc, char *argv[]) {
     }
 
     //check to make sure shared dir has trailing slash
-    if (argv[1][(strnlen(argv[1], FILENAME_MAX) - 1)] != '/') {
+    if (argv[1][(strlen(argv[1]) - 1)] != '/') {
         perror("main: shared directory does not have trailing slash");
         exit(EXIT_FAILURE);
     }
